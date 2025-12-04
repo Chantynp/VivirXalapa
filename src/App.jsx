@@ -32,18 +32,42 @@ import { getFirestore, doc, setDoc, deleteDoc, addDoc, onSnapshot, collection, q
 
 // --- CONFIGURACIÓN FIREBASE ---
 const appId = typeof __app_id !== 'undefined' ? __app_id : 'vivir-xalapa-default';
-const firebaseConfig = JSON.parse(typeof __firebase_config !== 'undefined' ? __firebase_config : '{}');
+
+// Configuración desde variables de entorno (Vite)
+const firebaseConfig = {
+  apiKey: import.meta.env.VITE_FIREBASE_API_KEY,
+  authDomain: import.meta.env.VITE_FIREBASE_AUTH_DOMAIN,
+  projectId: import.meta.env.VITE_FIREBASE_PROJECT_ID,
+  storageBucket: import.meta.env.VITE_FIREBASE_STORAGE_BUCKET,
+  messagingSenderId: import.meta.env.VITE_FIREBASE_MESSAGING_SENDER_ID,
+  appId: import.meta.env.VITE_FIREBASE_APP_ID
+};
 
 let app, db, auth;
-if (Object.keys(firebaseConfig).length > 0) {
-  app = initializeApp(firebaseConfig);
-  db = getFirestore(app);
-  auth = getAuth(app);
+// Solo usar Firebase si todas las variables están configuradas
+const USE_FIREBASE = firebaseConfig.apiKey && 
+                     firebaseConfig.authDomain && 
+                     firebaseConfig.projectId;
+
+if (USE_FIREBASE) {
+  try {
+    app = initializeApp(firebaseConfig);
+    db = getFirestore(app);
+    auth = getAuth(app);
+    console.log('✅ Firebase conectado exitosamente');
+  } catch (error) {
+    console.error('❌ Error al inicializar Firebase:', error);
+  }
+} else {
+  console.log('ℹ️ Ejecutando en modo local (sin Firebase)');
 }
 
 // Rutas de Colecciones
 const forumCollectionPath = `artifacts/${appId}/public/data/xalapa_forum`; 
 const driversCollectionPath = `artifacts/${appId}/public/data/xalapa_drivers`;
+
+// Generar ID único simple para modo local
+const generateLocalId = () => `local_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
 
 // Datos Mock (Estilo original)
 const NEWS_DATA = [
@@ -73,9 +97,20 @@ const App = () => {
   
   // Nuevo Estado: Nombre de Usuario Personalizable
   const [userName, setUserName] = useState('Usuario Local');
+  
+  // Estados para modo local (sin Firebase)
+  const [localPosts, setLocalPosts] = useState([]);
+  const [localDrivers, setLocalDrivers] = useState([]);
 
   // Auth Effect
   useEffect(() => {
+    if (!USE_FIREBASE) {
+      // Modo local: generar ID inmediatamente
+      setUserId(generateLocalId());
+      setIsAuthReady(true);
+      return;
+    }
+    
     if (!auth) {
       setIsAuthReady(true);
       return;
@@ -106,9 +141,18 @@ const App = () => {
             setOnline={setIsDriverOnline} 
             userId={userId}
             busType={selectedBusType}
+            localDrivers={localDrivers}
+            setLocalDrivers={setLocalDrivers}
         />
       );
-      case 'forum': return <ForumScreen userId={userId} userName={userName} />;
+      case 'forum': return (
+        <ForumScreen 
+          userId={userId} 
+          userName={userName} 
+          localPosts={localPosts}
+          setLocalPosts={setLocalPosts}
+        />
+      );
       case 'profile': return (
         <ProfileScreen 
             role={userRole} 
@@ -262,7 +306,7 @@ const HomeScreen = () => (
   </div>
 );
 
-const MapScreen = ({ isDriver, isOnline, setOnline, userId, busType }) => {
+const MapScreen = ({ isDriver, isOnline, setOnline, userId, busType, localDrivers, setLocalDrivers }) => {
   const [filters, setFilters] = useState({ restaurants: true, tourist: true, buses: true });
   const [activeDrivers, setActiveDrivers] = useState([]);
   const driverLocationRef = useRef({ lat: 19.5274, lng: 96.9238 });
@@ -270,33 +314,62 @@ const MapScreen = ({ isDriver, isOnline, setOnline, userId, busType }) => {
   // Lógica Conductor
   useEffect(() => {
     let interval;
-    if (isDriver && isOnline && userId && db) {
+    if (isDriver && isOnline && userId) {
       interval = setInterval(() => {
         // Simulación movimiento
         driverLocationRef.current.lat += (Math.random() - 0.5) * 0.0005; 
         driverLocationRef.current.lng += (Math.random() - 0.5) * 0.0005;
         
-        setDoc(doc(db, driversCollectionPath, userId), {
-          userId, type: busType,
+        const driverData = {
+          userId, 
+          type: busType,
           lat: driverLocationRef.current.lat,
           lng: driverLocationRef.current.lng,
-          lastUpdate: serverTimestamp()
-        }, { merge: true });
+          lastUpdate: new Date()
+        };
+        
+        if (USE_FIREBASE && db) {
+          setDoc(doc(db, driversCollectionPath, userId), {
+            ...driverData,
+            lastUpdate: serverTimestamp()
+          }, { merge: true });
+        } else {
+          // Modo local
+          setLocalDrivers(prev => {
+            const index = prev.findIndex(d => d.userId === userId);
+            if (index >= 0) {
+              const updated = [...prev];
+              updated[index] = { id: userId, ...driverData };
+              return updated;
+            }
+            return [...prev, { id: userId, ...driverData }];
+          });
+        }
       }, 3000);
-    } else if (isDriver && !isOnline && userId && db) {
+    } else if (isDriver && !isOnline && userId) {
+      if (USE_FIREBASE && db) {
         deleteDoc(doc(db, driversCollectionPath, userId));
+      } else {
+        // Modo local
+        setLocalDrivers(prev => prev.filter(d => d.userId !== userId));
+      }
     }
     return () => clearInterval(interval);
   }, [isDriver, isOnline, userId, busType]);
 
   // Lógica Mapa Público
   useEffect(() => {
+    if(!USE_FIREBASE) {
+      setActiveDrivers(localDrivers);
+      return;
+    }
+    
     if(!db) return;
     const unsub = onSnapshot(query(collection(db, driversCollectionPath)), (snap) => {
         setActiveDrivers(snap.docs.map(d => ({ id: d.id, ...d.data() })));
     });
     return () => unsub();
-  }, []);
+  }, [localDrivers]);
 
   const toggleFilter = (key) => setFilters(prev => ({ ...prev, [key]: !prev[key] }));
 
@@ -405,31 +478,60 @@ const FilterChip = ({ label, active, onClick }) => (
   </button>
 );
 
-const ForumScreen = ({ userId, userName }) => {
+const ForumScreen = ({ userId, userName, localPosts, setLocalPosts }) => {
   const [posts, setPosts] = useState([]);
   const [text, setText] = useState('');
 
   useEffect(() => {
+    if(!USE_FIREBASE) {
+      setPosts(localPosts);
+      return;
+    }
+    
     if(!db) return;
     const unsub = onSnapshot(query(collection(db, forumCollectionPath)), snap => {
         setPosts(snap.docs.map(d => ({id: d.id, ...d.data()})).sort((a,b) => (b.timestamp?.seconds||0)-(a.timestamp?.seconds||0)));
     });
     return () => unsub();
-  }, []);
+  }, [localPosts]);
 
   const handlePost = async (e) => {
     e.preventDefault();
     if(!text.trim() || !userId) return;
-    await addDoc(collection(db, forumCollectionPath), {
-        text, userId, user: userName, place: 'General', likes: 0, timestamp: serverTimestamp()
-    });
+    
+    const newPost = {
+      id: generateLocalId(),
+      text, 
+      userId, 
+      user: userName, 
+      place: 'General', 
+      likes: 0, 
+      timestamp: new Date()
+    };
+    
+    if (USE_FIREBASE && db) {
+      await addDoc(collection(db, forumCollectionPath), {
+          ...newPost,
+          timestamp: serverTimestamp()
+      });
+    } else {
+      // Modo local
+      setLocalPosts(prev => [newPost, ...prev]);
+    }
+    
     setText('');
   };
 
   // Nueva función: Borrar comentario
   const deletePost = async (postId) => {
       if (!confirm("¿Estás seguro de que quieres borrar este comentario?")) return;
-      await deleteDoc(doc(db, forumCollectionPath, postId));
+      
+      if (USE_FIREBASE && db) {
+        await deleteDoc(doc(db, forumCollectionPath, postId));
+      } else {
+        // Modo local
+        setLocalPosts(prev => prev.filter(p => p.id !== postId));
+      }
   };
 
   return (
