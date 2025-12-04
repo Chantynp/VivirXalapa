@@ -242,69 +242,129 @@ const getCategoryIcon = (category) => {
     }
 };
 
-const HomeScreen = () => (
-  <div className="p-4 space-y-6">
-    <div className="bg-gradient-to-br from-blue-500 to-blue-600 rounded-2xl p-6 text-white shadow-lg relative overflow-hidden">
-      <div className="relative z-10">
-        <div className="flex justify-between items-start">
+
+// --- Clima dinámico ---
+const weatherIcons = {
+  clear:    { icon: <Sun size={40} />, color: 'from-yellow-400 to-yellow-600', label: 'Despejado' },
+  cloudy:   { icon: <Cloud size={40} />, color: 'from-gray-400 to-gray-600', label: 'Nublado' },
+  rain:     { icon: <CloudRain size={40} />, color: 'from-blue-500 to-blue-700', label: 'Lluvia' },
+  drizzle:  { icon: <CloudRain size={40} />, color: 'from-blue-400 to-blue-600', label: 'Llovizna' },
+  storm:    { icon: <CloudRain size={40} />, color: 'from-indigo-700 to-gray-800', label: 'Tormenta' },
+  snow:     { icon: <Cloud size={40} />, color: 'from-blue-200 to-blue-400', label: 'Nieve' },
+  fog:      { icon: <Cloud size={40} />, color: 'from-gray-300 to-gray-500', label: 'Niebla' },
+};
+
+function getWeatherType(code) {
+  // Open-Meteo weather codes: https://open-meteo.com/en/docs#api_form
+  if ([0, 1].includes(code)) return 'clear';
+  if ([2, 3, 45, 48].includes(code)) return 'cloudy';
+  if ([51, 53, 55, 56, 57].includes(code)) return 'drizzle';
+  if ([61, 63, 65, 66, 67, 80, 81, 82].includes(code)) return 'rain';
+  if ([71, 73, 75, 77, 85, 86].includes(code)) return 'snow';
+  if ([95, 96, 99].includes(code)) return 'storm';
+  if ([45, 48].includes(code)) return 'fog';
+  return 'cloudy';
+}
+
+const HomeScreen = () => {
+  const [weather, setWeather] = useState({
+    temp: null,
+    feels: null,
+    code: null,
+    loading: true,
+  });
+
+  useEffect(() => {
+    const fetchWeather = async () => {
+      try {
+        // Xalapa: lat 19.5274, lon -96.9238
+        const url = 'https://api.open-meteo.com/v1/forecast?latitude=19.5274&longitude=-96.9238&current=temperature_2m,apparent_temperature,weather_code';
+        const res = await fetch(url);
+        const data = await res.json();
+        setWeather({
+          temp: Math.round(data.current.temperature_2m),
+          feels: Math.round(data.current.apparent_temperature),
+          code: data.current.weather_code,
+          loading: false,
+        });
+      } catch (e) {
+        setWeather(w => ({ ...w, loading: false }));
+      }
+    };
+    fetchWeather();
+    const interval = setInterval(fetchWeather, 10 * 60 * 1000); // cada 10 min
+    return () => clearInterval(interval);
+  }, []);
+
+  const type = getWeatherType(weather.code);
+  const icon = weatherIcons[type]?.icon || <Cloud size={40} />;
+  const color = weatherIcons[type]?.color || 'from-blue-500 to-blue-600';
+  const label = weatherIcons[type]?.label || 'Clima';
+
+  return (
+    <div className="p-4 space-y-6">
+      <div className={`bg-gradient-to-br ${color} rounded-2xl p-6 text-white shadow-lg relative overflow-hidden`}>
+        <div className="relative z-10">
+          <div className="flex justify-between items-start">
+            <div>
+              <h2 className="text-2xl font-bold">Xalapa, Ver.</h2>
+              <p className="opacity-90">{weather.loading ? 'Cargando clima...' : label}</p>
+            </div>
+            {icon}
+          </div>
+          <div className="mt-4 flex items-end gap-2">
+            <span className="text-5xl font-bold">{weather.loading || weather.temp === null ? '--' : `${weather.temp}°`}</span>
+            <span className="mb-2 opacity-80">{weather.loading || weather.feels === null ? '' : `Sensación ${weather.feels}°`}</span>
+          </div>
+        </div>
+        <div className="absolute -right-4 -bottom-4 opacity-10">
+          <MapPin size={150} />
+        </div>
+      </div>
+
+      {/* Accesos Rápidos */}
+      <div className="grid grid-cols-2 gap-4">
+        <div className="bg-white p-4 rounded-xl shadow-sm border border-gray-100 flex items-center gap-3">
+          <div className="bg-orange-100 p-2 rounded-lg text-orange-600">
+            <Bus size={20} />
+          </div>
           <div>
-            <h2 className="text-2xl font-bold">Xalapa, Ver.</h2>
-            <p className="opacity-90">Mayormente nublado</p>
+            <p className="font-bold text-sm">Mi Ruta</p>
+            <p className="text-xs text-gray-500">¿Dónde viene?</p>
           </div>
-          <CloudRain size={40} />
         </div>
-        <div className="mt-4 flex items-end gap-2">
-          <span className="text-5xl font-bold">19°</span>
-          <span className="mb-2 opacity-80">Sensación 17°</span>
-        </div>
-      </div>
-      <div className="absolute -right-4 -bottom-4 opacity-10">
-        <MapPin size={150} />
-      </div>
-    </div>
-
-    {/* Accesos Rápidos */}
-    <div className="grid grid-cols-2 gap-4">
-      <div className="bg-white p-4 rounded-xl shadow-sm border border-gray-100 flex items-center gap-3">
-        <div className="bg-orange-100 p-2 rounded-lg text-orange-600">
-          <Bus size={20} />
-        </div>
-        <div>
-          <p className="font-bold text-sm">Mi Ruta</p>
-          <p className="text-xs text-gray-500">¿Dónde viene?</p>
-        </div>
-      </div>
-      <div className="bg-white p-4 rounded-xl shadow-sm border border-gray-100 flex items-center gap-3">
-        <div className="bg-yellow-100 p-2 rounded-lg text-yellow-600">
-          <Coffee size={20} />
-        </div>
-        <div>
-          <p className="font-bold text-sm">Turismo</p>
-          <p className="text-xs text-gray-500">Qué hacer hoy</p>
-        </div>
-      </div>
-    </div>
-
-    {/* Noticias con nuevos iconos */}
-    <div>
-      <h3 className="font-bold text-gray-800 mb-3 text-lg">Noticias Locales</h3>
-      <div className="space-y-3">
-        {NEWS_DATA.map(news => (
-          <div key={news.id} className="bg-white p-4 rounded-xl shadow-sm border border-gray-100 flex gap-4">
-             <div className="w-16 h-16 bg-gray-100 rounded-lg flex-shrink-0 flex items-center justify-center">
-                {getCategoryIcon(news.category)}
-             </div>
-             <div>
-               <span className="text-xs font-bold text-gray-500 uppercase">{news.category}</span>
-               <h4 className="font-semibold text-gray-800 text-sm leading-tight mt-1">{news.title}</h4>
-               <p className="text-xs text-gray-400 mt-2">{news.time}</p>
-             </div>
+        <div className="bg-white p-4 rounded-xl shadow-sm border border-gray-100 flex items-center gap-3">
+          <div className="bg-yellow-100 p-2 rounded-lg text-yellow-600">
+            <Coffee size={20} />
           </div>
-        ))}
+          <div>
+            <p className="font-bold text-sm">Turismo</p>
+            <p className="text-xs text-gray-500">Qué hacer hoy</p>
+          </div>
+        </div>
+      </div>
+
+      {/* Noticias con nuevos iconos */}
+      <div>
+        <h3 className="font-bold text-gray-800 mb-3 text-lg">Noticias Locales</h3>
+        <div className="space-y-3">
+          {NEWS_DATA.map(news => (
+            <div key={news.id} className="bg-white p-4 rounded-xl shadow-sm border border-gray-100 flex gap-4">
+               <div className="w-16 h-16 bg-gray-100 rounded-lg flex-shrink-0 flex items-center justify-center">
+                  {getCategoryIcon(news.category)}
+               </div>
+               <div>
+                 <span className="text-xs font-bold text-gray-500 uppercase">{news.category}</span>
+                 <h4 className="font-semibold text-gray-800 text-sm leading-tight mt-1">{news.title}</h4>
+                 <p className="text-xs text-gray-400 mt-2">{news.time}</p>
+               </div>
+            </div>
+          ))}
+        </div>
       </div>
     </div>
-  </div>
-);
+  );
+};
 
 const MapScreen = ({ isDriver, isOnline, setOnline, userId, busType, localDrivers, setLocalDrivers }) => {
   const [filters, setFilters] = useState({ restaurants: true, tourist: true, buses: true });
