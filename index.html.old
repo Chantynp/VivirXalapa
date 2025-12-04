@@ -1,0 +1,530 @@
+import React, { useState, useEffect, useRef } from 'react';
+import { 
+  Map, 
+  Navigation, 
+  MessageSquare, 
+  User, 
+  CloudRain, 
+  Sun, 
+  Bus, 
+  Coffee, 
+  Landmark, 
+  MapPin, 
+  Menu,
+  Search,
+  Send,
+  Camera,
+  ToggleLeft,
+  ToggleRight,
+  Info,
+  Heart,
+  Trash2,      // Icono para borrar
+  CarFront,    // Icono para Tráfico
+  Flower2,     // Icono para Cultura
+  Cloud,       // Icono para Clima
+  Edit2        // Icono para editar nombre
+} from 'lucide-react';
+
+// FIREBASE IMPORTS
+import { initializeApp } from 'firebase/app';
+import { getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged } from 'firebase/auth';
+import { getFirestore, doc, setDoc, deleteDoc, addDoc, onSnapshot, collection, query, serverTimestamp } from 'firebase/firestore';
+
+// --- CONFIGURACIÓN FIREBASE ---
+const appId = typeof __app_id !== 'undefined' ? __app_id : 'vivir-xalapa-default';
+const firebaseConfig = JSON.parse(typeof __firebase_config !== 'undefined' ? __firebase_config : '{}');
+
+let app, db, auth;
+if (Object.keys(firebaseConfig).length > 0) {
+  app = initializeApp(firebaseConfig);
+  db = getFirestore(app);
+  auth = getAuth(app);
+}
+
+// Rutas de Colecciones
+const forumCollectionPath = `artifacts/${appId}/public/data/xalapa_forum`; 
+const driversCollectionPath = `artifacts/${appId}/public/data/xalapa_drivers`;
+
+// Datos Mock (Estilo original)
+const NEWS_DATA = [
+  { id: 1, title: 'Cierre vial en el Centro', time: 'Hace 2 horas', category: 'Tráfico' },
+  { id: 2, title: 'Festival del Café en el Parque Juárez', time: 'Hace 4 horas', category: 'Cultura' },
+  { id: 3, title: 'Pronóstico de neblina densa para la tarde', time: 'Hace 5 horas', category: 'Clima' },
+];
+
+const PLACES_DATA = [
+  { id: 1, type: 'restaurant', x: 30, y: 40, name: 'Asadero Cien', icon: <Coffee size={16} /> },
+  { id: 2, type: 'restaurant', x: 60, y: 20, name: 'La Parroquia', icon: <Coffee size={16} /> },
+  { id: 3, type: 'tourist', x: 50, y: 50, name: 'Parque Juárez', icon: <Landmark size={16} /> },
+  { id: 4, type: 'tourist', x: 20, y: 80, name: 'Los Berros', icon: <Landmark size={16} /> },
+  { id: 5, type: 'bus_stop', x: 45, y: 45, name: 'Parada Enríquez', icon: <Bus size={16} /> },
+];
+
+// --- APP PRINCIPAL ---
+const App = () => {
+  const [activeTab, setActiveTab] = useState('home');
+  const [userRole, setUserRole] = useState('user'); 
+  const [isDriverOnline, setIsDriverOnline] = useState(false);
+  
+  // Estados de datos
+  const [userId, setUserId] = useState(null);
+  const [isAuthReady, setIsAuthReady] = useState(false);
+  const [selectedBusType, setSelectedBusType] = useState('verde');
+  
+  // Nuevo Estado: Nombre de Usuario Personalizable
+  const [userName, setUserName] = useState('Usuario Local');
+
+  // Auth Effect
+  useEffect(() => {
+    if (!auth) {
+      setIsAuthReady(true);
+      return;
+    }
+    const authenticate = async () => {
+      try {
+        if (typeof __initial_auth_token !== 'undefined') await signInWithCustomToken(auth, __initial_auth_token);
+        else await signInAnonymously(auth);
+      } catch (e) { console.error(e); }
+    };
+    const unsub = onAuthStateChanged(auth, u => {
+        setUserId(u ? u.uid : null);
+        setIsAuthReady(true);
+    });
+    authenticate();
+    return () => unsub();
+  }, []);
+
+  const renderContent = () => {
+    if (!isAuthReady) return <div className="flex h-full items-center justify-center text-gray-400">Cargando...</div>;
+
+    switch (activeTab) {
+      case 'home': return <HomeScreen />;
+      case 'map': return (
+        <MapScreen 
+            isDriver={userRole === 'driver'} 
+            isOnline={isDriverOnline} 
+            setOnline={setIsDriverOnline} 
+            userId={userId}
+            busType={selectedBusType}
+        />
+      );
+      case 'forum': return <ForumScreen userId={userId} userName={userName} />;
+      case 'profile': return (
+        <ProfileScreen 
+            role={userRole} 
+            setRole={setUserRole} 
+            userId={userId} 
+            busType={selectedBusType}
+            setBusType={setSelectedBusType}
+            isOnline={isDriverOnline}
+            userName={userName}
+            setUserName={setUserName}
+        />
+      );
+      default: return <HomeScreen />;
+    }
+  };
+
+  return (
+    <div className="flex justify-center items-center min-h-screen bg-gray-100 font-sans">
+      <div className="w-full max-w-md h-[850px] bg-white shadow-2xl rounded-3xl overflow-hidden flex flex-col relative border-8 border-gray-900">
+        
+        {/* Barra de Estado */}
+        <div className="bg-emerald-800 text-white px-4 py-1 text-xs flex justify-between items-center">
+          <span>12:30</span>
+          <div className="flex gap-1">
+            <span>LTE</span>
+            <span>100%</span>
+          </div>
+        </div>
+
+        {/* Header */}
+        <div className="bg-emerald-700 p-4 text-white shadow-md z-10">
+          <div className="flex justify-between items-center">
+            <h1 className="text-xl font-bold flex items-center gap-2">
+              <MapPin size={20} /> Vivir Xalapa
+            </h1>
+            <button onClick={() => setActiveTab('profile')}>
+              <User size={24} />
+            </button>
+          </div>
+          {userRole === 'driver' && (
+            <div className="mt-2 bg-emerald-900/50 p-2 rounded text-xs flex justify-between items-center">
+              <span>
+                  Modo Conductor: {isDriverOnline ? 'EN RUTA' : 'DESCONECTADO'}
+                  <span className="opacity-70 ml-2 uppercase">({selectedBusType})</span>
+              </span>
+              <div className={`w-3 h-3 rounded-full ${isDriverOnline ? 'bg-green-400 animate-pulse' : 'bg-red-400'}`}></div>
+            </div>
+          )}
+        </div>
+
+        {/* Contenido */}
+        <div className="flex-1 overflow-y-auto bg-gray-50 relative">
+          {renderContent()}
+        </div>
+
+        {/* Tab Bar */}
+        <div className="bg-white border-t border-gray-200 py-2 px-6 flex justify-between items-center shrink-0">
+          <TabButton icon={<Sun size={24} />} label="Inicio" active={activeTab === 'home'} onClick={() => setActiveTab('home')} />
+          <TabButton icon={<Map size={24} />} label="Mapa" active={activeTab === 'map'} onClick={() => setActiveTab('map')} />
+          <TabButton icon={<MessageSquare size={24} />} label="Foro" active={activeTab === 'forum'} onClick={() => setActiveTab('forum')} />
+          <TabButton icon={<Menu size={24} />} label="Menú" active={activeTab === 'profile'} onClick={() => setActiveTab('profile')} />
+        </div>
+      </div>
+    </div>
+  );
+};
+
+const TabButton = ({ icon, label, active, onClick }) => (
+  <button 
+    onClick={onClick}
+    className={`flex flex-col items-center gap-1 ${active ? 'text-emerald-600' : 'text-gray-400'} transition-colors`}
+  >
+    {icon}
+    <span className="text-[10px] font-medium">{label}</span>
+  </button>
+);
+
+// --- PANTALLAS ---
+
+// Helper para iconos de noticias
+const getCategoryIcon = (category) => {
+    switch(category) {
+        case 'Tráfico': return <CarFront size={20} className="text-red-500" />;
+        case 'Cultura': return <Flower2 size={20} className="text-pink-500" />;
+        case 'Clima': return <Cloud size={20} className="text-blue-400" />;
+        default: return <Info size={20} className="text-gray-400" />;
+    }
+};
+
+const HomeScreen = () => (
+  <div className="p-4 space-y-6">
+    <div className="bg-gradient-to-br from-blue-500 to-blue-600 rounded-2xl p-6 text-white shadow-lg relative overflow-hidden">
+      <div className="relative z-10">
+        <div className="flex justify-between items-start">
+          <div>
+            <h2 className="text-2xl font-bold">Xalapa, Ver.</h2>
+            <p className="opacity-90">Mayormente nublado</p>
+          </div>
+          <CloudRain size={40} />
+        </div>
+        <div className="mt-4 flex items-end gap-2">
+          <span className="text-5xl font-bold">19°</span>
+          <span className="mb-2 opacity-80">Sensación 17°</span>
+        </div>
+      </div>
+      <div className="absolute -right-4 -bottom-4 opacity-10">
+        <MapPin size={150} />
+      </div>
+    </div>
+
+    {/* Accesos Rápidos */}
+    <div className="grid grid-cols-2 gap-4">
+      <div className="bg-white p-4 rounded-xl shadow-sm border border-gray-100 flex items-center gap-3">
+        <div className="bg-orange-100 p-2 rounded-lg text-orange-600">
+          <Bus size={20} />
+        </div>
+        <div>
+          <p className="font-bold text-sm">Mi Ruta</p>
+          <p className="text-xs text-gray-500">¿Dónde viene?</p>
+        </div>
+      </div>
+      <div className="bg-white p-4 rounded-xl shadow-sm border border-gray-100 flex items-center gap-3">
+        <div className="bg-yellow-100 p-2 rounded-lg text-yellow-600">
+          <Coffee size={20} />
+        </div>
+        <div>
+          <p className="font-bold text-sm">Turismo</p>
+          <p className="text-xs text-gray-500">Qué hacer hoy</p>
+        </div>
+      </div>
+    </div>
+
+    {/* Noticias con nuevos iconos */}
+    <div>
+      <h3 className="font-bold text-gray-800 mb-3 text-lg">Noticias Locales</h3>
+      <div className="space-y-3">
+        {NEWS_DATA.map(news => (
+          <div key={news.id} className="bg-white p-4 rounded-xl shadow-sm border border-gray-100 flex gap-4">
+             <div className="w-16 h-16 bg-gray-100 rounded-lg flex-shrink-0 flex items-center justify-center">
+                {getCategoryIcon(news.category)}
+             </div>
+             <div>
+               <span className="text-xs font-bold text-gray-500 uppercase">{news.category}</span>
+               <h4 className="font-semibold text-gray-800 text-sm leading-tight mt-1">{news.title}</h4>
+               <p className="text-xs text-gray-400 mt-2">{news.time}</p>
+             </div>
+          </div>
+        ))}
+      </div>
+    </div>
+  </div>
+);
+
+const MapScreen = ({ isDriver, isOnline, setOnline, userId, busType }) => {
+  const [filters, setFilters] = useState({ restaurants: true, tourist: true, buses: true });
+  const [activeDrivers, setActiveDrivers] = useState([]);
+  const driverLocationRef = useRef({ lat: 19.5274, lng: 96.9238 });
+
+  // Lógica Conductor
+  useEffect(() => {
+    let interval;
+    if (isDriver && isOnline && userId && db) {
+      interval = setInterval(() => {
+        // Simulación movimiento
+        driverLocationRef.current.lat += (Math.random() - 0.5) * 0.0005; 
+        driverLocationRef.current.lng += (Math.random() - 0.5) * 0.0005;
+        
+        setDoc(doc(db, driversCollectionPath, userId), {
+          userId, type: busType,
+          lat: driverLocationRef.current.lat,
+          lng: driverLocationRef.current.lng,
+          lastUpdate: serverTimestamp()
+        }, { merge: true });
+      }, 3000);
+    } else if (isDriver && !isOnline && userId && db) {
+        deleteDoc(doc(db, driversCollectionPath, userId));
+    }
+    return () => clearInterval(interval);
+  }, [isDriver, isOnline, userId, busType]);
+
+  // Lógica Mapa Público
+  useEffect(() => {
+    if(!db) return;
+    const unsub = onSnapshot(query(collection(db, driversCollectionPath)), (snap) => {
+        setActiveDrivers(snap.docs.map(d => ({ id: d.id, ...d.data() })));
+    });
+    return () => unsub();
+  }, []);
+
+  const toggleFilter = (key) => setFilters(prev => ({ ...prev, [key]: !prev[key] }));
+
+  // Helper de posición
+  const getCssPosition = (lat, lng) => {
+    // Ajustado para coincidir visualmente mejor con el iframe de OpenStreetMap de Xalapa Centro
+    const minLat = 19.5200, maxLat = 19.5350;
+    const minLng = -96.9300, maxLng = -96.9150;
+    return {
+        top: `${Math.min(Math.max(100 - ((lat - minLat) / (maxLat - minLat)) * 100, 0), 100)}%`,
+        left: `${Math.min(Math.max(((lng - minLng) / (maxLng - minLng)) * 100, 0), 100)}%`
+    };
+  };
+
+  return (
+    <div className="h-full relative flex flex-col">
+      <div className="flex-1 bg-gray-200 relative overflow-hidden group">
+        
+        {/* MAPA REAL: OpenStreetMap iframe para dar la sensación de servicio conectado */}
+        <div className="absolute inset-0 z-0">
+             <iframe 
+                width="100%" 
+                height="100%" 
+                frameBorder="0" 
+                scrolling="no" 
+                marginHeight="0" 
+                marginWidth="0" 
+                src="https://www.openstreetmap.org/export/embed.html?bbox=-96.9300%2C19.5200%2C-96.9150%2C19.5350&amp;layer=mapnik" 
+                style={{border: 0}}
+             ></iframe>
+             {/* Capa transparente para permitir clicks en marcadores (bloquea interacción directa con iframe en demo) */}
+             <div className="absolute inset-0 bg-transparent z-10"></div>
+        </div>
+
+        {/* POIs */}
+        {PLACES_DATA.map(place => {
+          if ((place.type === 'restaurant' && !filters.restaurants) || 
+              (place.type === 'tourist' && !filters.tourist) ||
+              (place.type === 'bus_stop' && !filters.buses)) return null;
+          
+          let colorClass = 'bg-blue-500';
+          if (place.type === 'restaurant') colorClass = 'bg-orange-500';
+          if (place.type === 'tourist') colorClass = 'bg-purple-500';
+          if (place.type === 'bus_stop') colorClass = 'bg-blue-800';
+
+          return (
+            <div key={place.id} className={`absolute p-2 rounded-full text-white shadow-lg transform -translate-x-1/2 -translate-y-1/2 cursor-pointer hover:scale-110 transition-transform ${colorClass} z-30`}
+              style={{ left: `${place.x}%`, top: `${place.y}%` }}>
+              {place.icon}
+            </div>
+          );
+        })}
+
+        {/* Conductores */}
+        {filters.buses && activeDrivers.map(driver => {
+            const pos = getCssPosition(driver.lat, driver.lng);
+            let busColor = 'bg-emerald-600'; 
+            if(driver.type === 'amarillo') busColor = 'bg-yellow-500 text-black';
+            if(driver.type === 'blanco') busColor = 'bg-gray-100 text-black border border-gray-400';
+
+            return (
+                <div key={driver.id} className={`absolute ${busColor} p-1 rounded-md shadow-xl flex flex-col items-center transition-all duration-1000 z-30`}
+                    style={{ left: pos.left, top: pos.top }}>
+                    <Bus size={18} />
+                    <span className="text-[8px] font-bold bg-black/50 text-white px-1 rounded mt-0.5 whitespace-nowrap">
+                        {driver.type}
+                    </span>
+                </div>
+            );
+        })}
+      </div>
+
+      {/* Panel Conductor */}
+      {isDriver && (
+        <div className="bg-emerald-900 text-white p-4 shadow-lg rounded-t-2xl relative z-40">
+          <div className="flex justify-between items-center">
+            <div>
+              <p className="font-bold">Panel de Conductor</p>
+              <p className="text-xs opacity-70">Camión: <span className="uppercase font-bold text-yellow-300">{busType}</span></p>
+            </div>
+            <button 
+              onClick={() => setOnline(!isOnline)}
+              className={`flex items-center gap-2 px-4 py-2 rounded-full font-bold transition-colors ${isOnline ? 'bg-red-500 hover:bg-red-600' : 'bg-green-500 hover:bg-green-600'}`}
+            >
+              {isOnline ? 'Detener' : 'Iniciar Ruta'}
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* Filtros */}
+      {!isDriver && (
+        <div className="bg-white p-3 shadow-lg flex gap-2 overflow-x-auto border-t border-gray-200 relative z-40">
+          <FilterChip label="Restaurantes" active={filters.restaurants} onClick={() => toggleFilter('restaurants')} />
+          <FilterChip label="Turismo" active={filters.tourist} onClick={() => toggleFilter('tourist')} />
+          <FilterChip label="Rutas" active={filters.buses} onClick={() => toggleFilter('buses')} />
+        </div>
+      )}
+    </div>
+  );
+};
+
+const FilterChip = ({ label, active, onClick }) => (
+  <button onClick={onClick} className={`px-3 py-1 rounded-full text-xs font-medium whitespace-nowrap transition-colors border ${active ? 'bg-emerald-100 text-emerald-800 border-emerald-200' : 'bg-gray-100 text-gray-600 border-transparent'}`}>
+    {label}
+  </button>
+);
+
+const ForumScreen = ({ userId, userName }) => {
+  const [posts, setPosts] = useState([]);
+  const [text, setText] = useState('');
+
+  useEffect(() => {
+    if(!db) return;
+    const unsub = onSnapshot(query(collection(db, forumCollectionPath)), snap => {
+        setPosts(snap.docs.map(d => ({id: d.id, ...d.data()})).sort((a,b) => (b.timestamp?.seconds||0)-(a.timestamp?.seconds||0)));
+    });
+    return () => unsub();
+  }, []);
+
+  const handlePost = async (e) => {
+    e.preventDefault();
+    if(!text.trim() || !userId) return;
+    await addDoc(collection(db, forumCollectionPath), {
+        text, userId, user: userName, place: 'General', likes: 0, timestamp: serverTimestamp()
+    });
+    setText('');
+  };
+
+  // Nueva función: Borrar comentario
+  const deletePost = async (postId) => {
+      if (!confirm("¿Estás seguro de que quieres borrar este comentario?")) return;
+      await deleteDoc(doc(db, forumCollectionPath, postId));
+  };
+
+  return (
+    <div className="p-4 h-full flex flex-col">
+      <h2 className="text-xl font-bold mb-4 text-gray-800">Comunidad Xalapa</h2>
+      <div className="bg-white p-4 rounded-xl shadow-sm border border-gray-100 mb-6">
+        <form onSubmit={handlePost}>
+          <textarea className="w-full bg-gray-50 border border-gray-200 rounded-lg p-3 text-sm focus:outline-none focus:border-emerald-500 resize-none"
+            placeholder={`Comenta como ${userName}...`} rows="3" value={text} onChange={e=>setText(e.target.value)} disabled={!userId} />
+          <div className="flex justify-between items-center mt-2">
+            <button type="button" className="text-gray-400 hover:text-emerald-600"><Camera size={20} /></button>
+            <button type="submit" disabled={!userId} className="bg-emerald-600 text-white px-4 py-2 rounded-lg text-sm font-medium flex items-center gap-2 hover:bg-emerald-700">
+              Publicar <Send size={14} />
+            </button>
+          </div>
+        </form>
+      </div>
+      <div className="flex-1 overflow-y-auto space-y-4 pb-4">
+        {posts.map(post => (
+          <div key={post.id} className="bg-white p-4 rounded-xl shadow-sm border border-gray-100 relative group">
+            <div className="flex justify-between items-start mb-2">
+              <div className="flex items-center gap-2">
+                <div className="w-8 h-8 bg-purple-100 rounded-full flex items-center justify-center text-purple-600 font-bold text-xs">{post.user ? post.user[0] : 'U'}</div>
+                <div><p className="font-bold text-sm text-gray-800">{post.user}</p><p className="text-[10px] text-gray-500 flex items-center gap-1"><MapPin size={8} /> {post.place}</p></div>
+              </div>
+              {/* Botón de Borrar (Solo si es el dueño del post) */}
+              {post.userId === userId && (
+                  <button onClick={() => deletePost(post.id)} className="text-gray-400 hover:text-red-500 p-1">
+                      <Trash2 size={14} />
+                  </button>
+              )}
+            </div>
+            <p className="text-gray-600 text-sm mb-3">{post.text}</p>
+            <div className="flex gap-4 border-t border-gray-50 pt-2"><button className="text-xs text-gray-500">❤️ {post.likes}</button></div>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+};
+
+const ProfileScreen = ({ role, setRole, userId, busType, setBusType, isOnline, userName, setUserName }) => (
+  <div className="p-4 space-y-4">
+    <div className="flex items-center gap-4 mb-6">
+      <div className="w-20 h-20 bg-gray-200 rounded-full flex items-center justify-center text-gray-400">
+        <User size={40} />
+      </div>
+      <div className="flex-1">
+        <h2 className="text-xl font-bold">Bienvenido</h2>
+        {/* Editor de Nombre Simple */}
+        <div className="flex items-center gap-2 mt-1">
+            <input 
+                type="text" 
+                value={userName} 
+                onChange={(e) => setUserName(e.target.value)}
+                className="bg-gray-100 border-none text-sm px-2 py-1 rounded w-full font-medium text-gray-700 focus:ring-2 focus:ring-emerald-500 outline-none"
+            />
+            <Edit2 size={14} className="text-gray-400"/>
+        </div>
+        <p className="text-[10px] text-gray-400 mt-1">ID: {userId ? userId.substring(0,6) : '...'}</p>
+      </div>
+    </div>
+
+    <div className="bg-white rounded-xl shadow-sm border border-gray-100 overflow-hidden">
+      <div className="p-4 border-b border-gray-100">
+        <h3 className="font-bold text-gray-700 mb-4">Configuración</h3>
+        <div className="flex items-center justify-between py-2">
+          <div><p className="font-medium text-sm">Modo Conductor</p><p className="text-xs text-gray-500">Activar herramientas</p></div>
+          <button onClick={() => !isOnline && setRole(role === 'user' ? 'driver' : 'user')} className={`text-2xl transition-colors ${role === 'driver' ? 'text-emerald-600' : 'text-gray-300'}`} disabled={isOnline}>
+            {role === 'driver' ? <ToggleRight size={40} /> : <ToggleLeft size={40} />}
+          </button>
+        </div>
+        
+        {role === 'driver' && (
+             <div className="mt-4 pt-4 border-t border-gray-100">
+                <p className="text-xs font-bold text-gray-500 mb-2 uppercase tracking-wide">Selecciona tu Camión</p>
+                <div className="flex gap-2">
+                   {['verde', 'amarillo', 'blanco'].map(type => (
+                       <button key={type} onClick={() => setBusType(type)} disabled={isOnline}
+                           className={`flex-1 py-2 rounded-lg text-xs font-bold capitalize border-2 transition-all ${
+                               busType === type ? 'border-emerald-500 bg-emerald-50 text-emerald-700' : 'border-gray-200 text-gray-500 hover:border-gray-300'
+                           } ${isOnline ? 'opacity-50 cursor-not-allowed' : ''}`}>
+                           {type}
+                       </button>
+                   ))}
+                </div>
+             </div>
+        )}
+      </div>
+      <div className="p-4">
+        <button className="w-full text-left py-3 text-sm text-gray-600 border-b border-gray-50">Notificaciones</button>
+        <button className="w-full text-left py-3 text-sm text-gray-600">Reportar error</button>
+      </div>
+    </div>
+  </div>
+);
+
+export default App;
